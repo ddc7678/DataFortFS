@@ -19,8 +19,8 @@
    ```
 2. **Clone and Build DataFortFS**:
    ```bash
-   git clone https://github.com/<your-repo>/datafortfs.git
-   cd datafortfs
+   git clone https://github.com/ddc7678/DataFortFS.git
+   cd DataFortFS
    cargo build --release
    ```
 3. **Install the Binary**:
@@ -57,7 +57,7 @@ DataFortFS uses RSA-2048 for encrypting the AES-256 key. You need an unencrypted
 Run `dffs` with one of the following commands. Use `--mfa` for TOTP authentication and `--debug` for verbose output.
 
 ### Create a Container
-Creates an encrypted container directory to store files.
+Creates an encrypted container directory to store files. 
 
 ```bash
 dffs create <container_path> <public_key_path> [--mfa] [--debug]
@@ -73,7 +73,7 @@ dffs create <container_path> <public_key_path> [--mfa] [--debug]
     ```
   - **Result**: Creates `my_container/.config` with the encrypted AES-256 key and public key.
 
-- **Example (With MFA)**:
+- **Example (With MFA)**: With --mfa open your terminal to full screen for the QR Code.
   ```bash
   dffs create ./my_container public_key.pem --mfa
   ```
