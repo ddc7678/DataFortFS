@@ -213,12 +213,17 @@ fn encrypt_filename(filename: &str, key: &[u8]) -> Result<String, CryptoError> {
         encrypted.extend_from_slice(&block);
     }
 
-    Ok(general_purpose::STANDARD_NO_PAD.encode(&encrypted))
+    let base64_str = general_purpose::STANDARD_NO_PAD.encode(&encrypted);
+    // Replace + with - and / with _ to make filename safe
+    let safe_filename = base64_str.replace('+', "-").replace('/', "_");
+    Ok(safe_filename)
 }
 
 fn decrypt_filename(encrypted_filename: &str, key: &[u8]) -> Result<String, CryptoError> {
+    // Reverse the replacement: - to + and _ to /
+    let base64_str = encrypted_filename.replace('-', "+").replace('_', "/");
     let cipher = aes::Aes256::new(GenericArray::from_slice(key));
-    let encrypted_data = general_purpose::STANDARD_NO_PAD.decode(encrypted_filename)?;
+    let encrypted_data = general_purpose::STANDARD_NO_PAD.decode(&base64_str)?;
     if encrypted_data.len() % 16 != 0 {
         return Err(CryptoError::Other("Invalid encrypted filename length: must be multiple of 16 bytes".to_string()));
     }
@@ -499,7 +504,11 @@ fn mount_container(container_path: &Path, private_key_path: &Path, mount_point: 
     Ok(())
 }
 
-fn unmount_container(container_path: &Path, private_key_path: &Path, mount_point: &Path, _debug: bool) -> Result<(), CryptoError> {
+fn unmount_container(container_path: &Path, private_key_path: &Path, mount_point: &Path, debug: bool) -> Result<(), CryptoError> {
+    if debug {
+        println!("DEBUG: Unmounting container from {:?}", mount_point);
+        println!("DEBUG: Reading private key from {:?}", private_key_path);
+    }
     // Read and parse private key
     let mut private_key_file = File::open(private_key_path)?;
     let mut private_key_data = Vec::new();
@@ -520,17 +529,26 @@ fn unmount_container(container_path: &Path, private_key_path: &Path, mount_point
         })
     })?;
 
+    if debug {
+        println!("DEBUG: Reading .config from {:?}", container_path.join(".config"));
+    }
     // Read and decrypt .config
     let config_path = container_path.join(".config");
     let mut config_file = File::open(&config_path).map_err(|e| CryptoError::Other(format!("Failed to open .config: {}", e)))?;
     let mut encrypted_config = Vec::new();
     config_file.read_to_end(&mut encrypted_config)?;
 
+    if debug {
+        println!("DEBUG: Decrypting .config with public key derived key");
+    }
     // Decrypt .config using public key derived key
     let public_key = RsaPublicKey::from(&private_key);
     let public_key_der = public_key.to_public_key_der().map_err(|e| CryptoError::Other(format!("Failed to encode public key to DER: {}", e)))?.as_bytes().to_vec();
     let config = decrypt_config(&encrypted_config, &public_key_der)?;
 
+    if debug {
+        println!("DEBUG: Decrypting AES-256 key");
+    }
     // Decrypt AES-256 key
     let padding = Oaep::new::<Sha256>();
     let aes_key = private_key.decrypt(padding, &config.encrypted_aes_key).map_err(|e| CryptoError::Other(format!("Failed to decrypt AES key: {}", e)))?;
@@ -540,8 +558,14 @@ fn unmount_container(container_path: &Path, private_key_path: &Path, mount_point
         return Err(CryptoError::Other("Public key mismatch: private key does not correspond to the public key in .config".to_string()));
     }
 
+    if debug {
+        println!("DEBUG: Reading files from mount point {:?}", mount_point);
+    }
     let entries: Vec<_> = fs::read_dir(mount_point)?.collect();
     if entries.is_empty() {
+        if debug {
+            println!("DEBUG: No files to encrypt, removing mount point");
+        }
         fs::remove_dir_all(mount_point)?;
         return Ok(()); // No files to encrypt
     }
@@ -550,17 +574,26 @@ fn unmount_container(container_path: &Path, private_key_path: &Path, mount_point
         let entry = entry?;
         let file_name = entry.file_name();
         let file_name_str = file_name.to_string_lossy();
+        if debug {
+            println!("DEBUG: Encrypting file: {}", file_name_str);
+        }
         let encrypted_file_name = encrypt_filename(&file_name_str, &aes_key)?;
 
         let mut file_data = Vec::new();
         File::open(entry.path())?.read_to_end(&mut file_data)?;
         let encrypted_data = encrypt_file(&file_data, &aes_key)?;
 
-        let output_path = container_path.join(encrypted_file_name);
+        let output_path = container_path.join(&encrypted_file_name);
+        if debug {
+            println!("DEBUG: Writing encrypted file to {:?}", output_path);
+        }
         let mut output_file = File::create(&output_path)?;
         output_file.write_all(&encrypted_data)?;
     }
 
+    if debug {
+        println!("DEBUG: Removing mount point {:?}", mount_point);
+    }
     fs::remove_dir_all(mount_point)?;
 
     Ok(())
